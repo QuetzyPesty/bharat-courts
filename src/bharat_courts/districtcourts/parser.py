@@ -18,6 +18,7 @@ from datetime import date, datetime
 
 from bs4 import BeautifulSoup, Tag
 
+from bharat_courts.casedetail import order_link
 from bharat_courts.models import CaseInfo, CaseOrder, CauseListEntry
 
 logger = logging.getLogger(__name__)
@@ -252,6 +253,13 @@ def _extract_parties(cell: Tag) -> tuple[str, str]:
     return text, ""
 
 
+#: A quoted CNR: 16 characters, two letters (state) then four letters or digits
+#: (district/establishment), then ten digits. Prefixes are not always letters:
+#: "MP04050004072025" (Madhya Pradesh district), "WBCHCO0001032025" (Calcutta
+#: HC original side) alongside "BRPA010216322024".
+_CNR_IN_HANDLER_RE = re.compile(r"'([A-Z]{2}[A-Z0-9]{4}\d{10})'")
+
+
 def _extract_cnr(row: Tag) -> str:
     """Extract CNR number from a table row.
 
@@ -265,13 +273,10 @@ def _extract_cnr(row: Tag) -> str:
             # Also check aria-label for embedded data
             continue
         # viewHistory pattern: second argument is CNR (quoted)
-        cnr_match = re.search(r"'([A-Z]{4}\d{12,})'", onclick)
+        cnr_match = _CNR_IN_HANDLER_RE.search(onclick)
         if cnr_match:
             return cnr_match.group(1)
         # viewHistory pattern: second argument is CNR (unquoted comma-sep)
-        vh_match = re.search(r"viewHistory\([^,]+,'([A-Z]{4}\d{12,})'", onclick)
-        if vh_match:
-            return vh_match.group(1)
     return ""
 
 
@@ -369,17 +374,7 @@ def parse_court_orders_html(html: str, base_url: str = "") -> list[CaseOrder]:
         order_type = _clean_text(cols[2].get_text())
         judge = _clean_text(cols[3].get_text())
 
-        pdf_url = ""
-        if len(cols) > 4:
-            link = cols[4].find("a")
-            if link and link.get("href"):
-                href = link["href"].strip()
-                if href.startswith("http"):
-                    pdf_url = href
-                elif href.startswith("/"):
-                    pdf_url = base_url + href if base_url else href
-                else:
-                    pdf_url = f"{base_url}/{href}" if base_url else href
+        pdf_url = order_link(cols[4].find("a"), base_url) if len(cols) > 4 else ""
 
         results.append(
             CaseOrder(

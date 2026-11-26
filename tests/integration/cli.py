@@ -140,6 +140,15 @@ def check_find_text(c: Check) -> None:
 def check_sci(c: Check) -> None:
     rows = run_json(c, "sci", "recent", "--limit", "3")
     c.details["rows"] = len(rows)
+    if not rows:
+        # Same empty-state rule as sci.py: the homepage lists only the day's uploads.
+        import httpx
+        from sci import _feed_says_empty
+
+        home = httpx.get("https://www.sci.gov.in/", timeout=30, follow_redirects=True).text
+        if _feed_says_empty(home):
+            c.skip("the homepage's Judgments panel says 'No records found' today")
+            return
     assert rows and rows[0].get("title")
     c.passed = True
 

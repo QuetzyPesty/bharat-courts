@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import date, datetime
+from urllib.parse import urlencode, urljoin
 
 from bs4 import BeautifulSoup, Tag
 
@@ -45,7 +46,18 @@ _LONG_DATE_RE = re.compile(r"(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+(\d{4})")
 #: "PLEADER(1)" is preceded by "(" and "PATEL(3802)" by a digit, so neither
 #: splits, while "SHARMA7)" does.
 _PARTY_SPLIT_RE = re.compile(r"(?<![\d(])\d{1,3}\)\s*")
+_INDENT_RE = re.compile(r"^ {2,}\S")
 _ADVOCATE_RE = re.compile(r"^advocate\s*[-:]?\s*", re.I)
+
+#: District order links carry no URL: ``href='#'`` plus
+#: ``onclick=displayPdf('<normal_v>','<case_val>','<court_code>','<filename>','<appFlag>')``.
+#: The portal's components.js POSTs those to ``home/display_pdf`` (in the session
+#: that looked the case up) and gets back ``{"order": "reports/<hash>.pdf"}``.
+_DISPLAY_PDF_RE = re.compile(
+    r"displayPdf\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'"
+    r"(?:\s*,\s*'([^']*)')?\s*\)"
+)
+DISPLAY_PDF_ACTION = "home/display_pdf"
 
 _NULLISH = {"", "-", "--", "none", "null", "na", "n/a"}
 
@@ -133,15 +145,21 @@ def _parties(soup: BeautifulSoup, css_class: str) -> list[PartyEntry]:
 
     entries: list[PartyEntry] = []
     for chunk in _PARTY_SPLIT_RE.split(raw):
-        lines = [ln.strip() for ln in chunk.splitlines() if ln.strip()]
-        if not lines:
+        raw_lines = [ln for ln in chunk.splitlines() if ln.strip()]
+        if not raw_lines:
             continue
         name, advocate = "", ""
-        for line in lines:
+        for raw_line in raw_lines:
+            line = raw_line.strip()
             if _ADVOCATE_RE.match(line):
                 advocate = _ADVOCATE_RE.sub("", line).strip()
             elif not name:
                 name = line
+            elif not advocate and _INDENT_RE.match(raw_line):
+                # Madras HC prints counsel on an indented line with no
+                # "Advocate-" label ("1) MONISHA<br/>&nbsp;&nbsp;M/S.X LAW ASSOCIATES").
+                # A party's own name is never indented, so this is safe.
+                advocate = line
         if name:
             entries.append(PartyEntry(name=name, advocate=advocate))
     return entries
@@ -209,6 +227,40 @@ def _history(soup: BeautifulSoup) -> list[HearingEntry]:
     return out
 
 
+def display_pdf_url(onclick: str, base_url: str) -> str:
+    """Turn a district ``displayPdf(...)`` handler into a ``home/display_pdf?...`` URL.
+
+    The URL is not fetchable as is: it records the form fields that
+    ``DistrictCourtClient.download_order_pdf`` POSTs. Returns "" if the handler
+    is not a displayPdf call.
+    """
+    m = _DISPLAY_PDF_RE.search(onclick or "")
+    if not m:
+        return ""
+    query = urlencode(
+        {
+            "normal_v": m.group(1),
+            "case_val": m.group(2),
+            "court_code": m.group(3),
+            "filename": m.group(4),
+            "appFlag": m.group(5) or "",
+        }
+    )
+    return f"{base_url.rstrip('/')}/{DISPLAY_PDF_ACTION}?{query}"
+
+
+def order_link(link: Tag | None, base_url: str) -> str:
+    """The PDF URL behind an order's anchor, from its href or its displayPdf handler."""
+    if link is None:
+        return ""
+    href = (link.get("href") or "").strip()
+    if not href or href == "#" or href.lower().startswith("javascript"):
+        return display_pdf_url(link.get("onclick", ""), base_url) if base_url else ""
+    if base_url and not href.startswith("http"):
+        href = urljoin(base_url.rstrip("/") + "/", href)
+    return href
+
+
 def _orders(soup: BeautifulSoup, base_url: str = "") -> list[CaseOrder]:
     table = soup.find("table", class_=re.compile(r"order_table", re.I))
     if table is None:
@@ -222,16 +274,14 @@ def _orders(soup: BeautifulSoup, base_url: str = "") -> list[CaseOrder]:
         if len(values) >= 5:
             _num, order_on, judge, order_date = values[0], values[1], values[2], values[3]
         elif len(values) >= 3:
-            _num, order_on, judge, order_date = values[0], "", "", values[1]
+            # District: number, date, details (the details link text names the order).
+            _num, order_on, judge, order_date = values[0], values[2], "", values[1]
         else:
             continue
         parsed = parse_flexible_date(order_date)
         if parsed is None:
             continue
-        link = row.find("a", href=True)
-        href = link["href"] if link else ""
-        if href and base_url and href.startswith(("cases/", "/")):
-            href = base_url.rstrip("/") + "/" + href.lstrip("/")
+        href = order_link(row.find("a"), base_url)
         out.append(
             CaseOrder(
                 order_date=parsed,

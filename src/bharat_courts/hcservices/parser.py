@@ -49,9 +49,11 @@ def _parse_date(text: str) -> date | None:
         return None
     for fmt in (DATE_FORMAT, "%Y-%m-%d"):
         try:
-            return datetime.strptime(text, fmt).date()
+            parsed = datetime.strptime(text, fmt).date()
         except ValueError:
             continue
+        # The advocate cause list fills "no next date" with 5000-01-01.
+        return None if parsed.year >= 3000 else parsed
     logger.debug("Could not parse date: %s", text)
     return None
 

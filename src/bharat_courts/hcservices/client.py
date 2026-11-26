@@ -42,6 +42,7 @@ from bharat_courts.models import (
     CauseListPDF,
     Court,
 )
+from bharat_courts.pdf import ensure_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -422,10 +423,13 @@ class HCServicesClient:
         year: str,
         bench_code: str = "1",
     ) -> list[CaseOrder]:
-        """Get court orders for a case.
+        """Get every order on a case, with its date, judge and PDF link.
 
-        Uses a case number search to get the encrypted order URL path,
-        then constructs the PDF download URL from display_pdf.php.
+        A case-number search finds the case's CNR; the CNR case page then
+        lists the orders. The search response alone carries only an
+        ``orderurlpath`` for one document and no dates, which used to come back
+        as a single "Order" dated today whose link the portal refused; it is
+        kept only as a fallback for a case the search returns without a CNR.
 
         Args:
             court: Court object.
@@ -435,7 +439,7 @@ class HCServicesClient:
             bench_code: Bench code from :meth:`list_benches` (default "1").
 
         Returns:
-            List of CaseOrder objects with PDF URLs.
+            List of CaseOrder objects, oldest first, as the case page lists them.
         """
 
         def build_form(captcha: str) -> dict:
@@ -449,6 +453,13 @@ class HCServicesClient:
             )
 
         resp = await self._post_with_captcha_retry(endpoints.SHOW_RECORDS_URL, build_form)
+        try:
+            cnrs = [c.cnr_number for c in parse_case_status(resp.text) if c.cnr_number]
+        except Exception:  # an unexpected shape: keep the legacy behaviour
+            cnrs = []
+        if cnrs:
+            detail = await self.case_status_by_cnr(cnrs[0])
+            return detail.orders
         return parse_orders(
             resp.text,
             base_url=endpoints.BASE_URL,
@@ -568,10 +579,4 @@ class HCServicesClient:
                 "Accept": "application/pdf,*/*",
             },
         )
-        content = resp.content
-        if content[:4] != b"%PDF":
-            raise RuntimeError(
-                f"PDF download did not return a valid PDF "
-                f"(got {len(content)} bytes; head={content[:64]!r})"
-            )
-        return content
+        return ensure_pdf(resp.content)

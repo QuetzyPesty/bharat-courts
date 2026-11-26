@@ -352,40 +352,52 @@ async def check_orders(c: Check) -> None:
                 year=_year_of(row),
             )
 
-        row, orders = await first_working(
+        from bharat_courts.pdf import OrderNotUploadedError
+
+        not_uploaded = {"orders": 0}
+        had_orders = {"cases": 0}
+
+        async def orders_and_pdf(row):
+            # Real orders come from the case page, oldest first. Courts often
+            # list an order before uploading its PDF ("Orders is not uploaded"):
+            # pass over those and try the next order, then the next case.
+            orders = await fetch_orders(row)
+            had_orders["cases"] += bool(orders)
+            for order in sorted((o for o in orders if o.pdf_url), key=lambda o: o.order_date):
+                try:
+                    return orders, order, await client.download_order_pdf(order.pdf_url)
+                except OrderNotUploadedError:
+                    not_uploaded["orders"] += 1
+                    continue
+            return orders, None, None
+
+        row, found = await first_working(
             c,
             ordered,
-            fetch_orders,
+            orders_and_pdf,
             label="orders",
             key=lambda r: f"{r.case_type}/{r.registration_number}",
+            accept=lambda v: v[2] is not None,
             max_tries=4,
         )
-        assert orders, "none of the sampled cases returned any order"
-        c.details["case"] = f"{row.case_type} {row.case_number} ({row.cnr_number})"
-        c.details["first_order"] = f"{orders[0].order_date} {orders[0].order_type}"
-        suite.save_json("court_orders", [o.to_dict(exclude_none=True) for o in orders])
-
-        # Oldest first: an order uploaded today is often not on the file
-        # server yet and comes back as the portal's "Unable to connect" page.
-        with_pdf = sorted((o for o in orders if o.pdf_url), key=lambda o: o.order_date)
-        assert with_pdf, "no order carries a PDF URL"
-
-        async def fetch_pdf(order):
-            return await client.download_order_pdf(order.pdf_url)
-
-        order, data = await first_working(
-            c,
-            with_pdf,
-            fetch_pdf,
-            label="pdf",
-            key=lambda o: str(o.order_date),
-            accept=lambda d: d[:4] == b"%PDF",
-            max_tries=3,
-        )
-    if data is None:
+    if found is None:
         if c.skip_if_portal_outage("display_pdf"):
             return
-        raise AssertionError("no order PDF could be downloaded")
+        if not had_orders["cases"] and not c.errors:
+            c.skip("the sampled cases have no orders yet (recently filed)")
+            return
+        if not_uploaded["orders"] and not c.errors:
+            # Real orders, but the court has not uploaded any of their PDFs
+            # (Kerala HC often lists orders weeks before uploading them).
+            c.skip(f"court has not uploaded these orders' PDFs ({not_uploaded['orders']} tried)")
+            return
+        raise AssertionError("no sampled case had an uploaded order PDF")
+    orders, order, data = found
+    assert data[:4] == b"%PDF", "download did not return a PDF"
+    assert all(o.order_date for o in orders), "an order has no date"
+    c.details["case"] = f"{row.case_type} {row.case_number} ({row.cnr_number})"
+    c.details["orders"] = f"{len(orders)}, first {orders[0].order_date} {orders[0].order_type}"
+    suite.save_json("court_orders", [o.to_dict(exclude_none=True) for o in orders])
     c.details["pdf"] = f"{order.order_date}: {len(data):,} bytes"
     c.passed = True
 
@@ -400,11 +412,17 @@ async def check_advocate(c: Check) -> None:
         # The page joins several advocates with commas ("N J DUTTA,B AHMED")
         # and may suffix a bar code in brackets; search wants one bare name.
         for raw in re.sub(r"\(.*?\)", "", p.advocate or "").split(","):
-            name = re.sub(r"^(MR|MS|MRS|DR|SHRI|SMT)\.?\s+", "", raw.strip(), flags=re.I)
+            name = re.sub(r"^(MR|MS|MRS|DR|SHRI|SMT|M/S)\.?\s*", "", raw.strip(), flags=re.I)
+            # The portal rejects punctuation in a name search (ERROR_VAL).
+            name = re.sub(r"[^A-Za-z ]+", " ", name).strip()
+            name = re.sub(r"\s+", " ", name)
             if len(name) >= 5 and " " in name and name not in names:
                 names.append(name)
     c.details["advocates_on_case"] = names[:3]
-    assert names, "case detail lists no advocate names"
+    if not names:
+        # Some benches print no counsel at all (Calcutta: "1) UNION OF INDIA NA").
+        c.skip("the sampled case page names no advocates")
+        return
     async with _client() as client:
 
         async def run(name: str):

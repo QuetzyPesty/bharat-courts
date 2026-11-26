@@ -23,6 +23,7 @@ from bharat_courts.config import BharatCourtsConfig
 from bharat_courts.config import config as default_config
 from bharat_courts.http import RateLimitedClient
 from bharat_courts.models import JudgmentResult
+from bharat_courts.pdf import ensure_pdf
 from bharat_courts.sci.parser import parse_recent_judgments
 
 logger = logging.getLogger(__name__)
@@ -30,8 +31,6 @@ logger = logging.getLogger(__name__)
 SCI_BASE = "https://www.sci.gov.in"
 SCI_HOME_URL = f"{SCI_BASE}/"
 SCI_GET_PDF_URL = f"{SCI_BASE}/sci-get-pdf/"
-
-_PDF_MAGIC = b"%PDF"
 
 
 class SCIClient:
@@ -99,12 +98,7 @@ class SCIClient:
             judgment.pdf_url,
             headers={"Referer": judgment.source_url or SCI_HOME_URL},
         )
-        if content[:4] != _PDF_MAGIC:
-            raise RuntimeError(
-                f"PDF download did not return a valid PDF "
-                f"(got {len(content)} bytes; head={content[:64]!r})"
-            )
-        judgment.pdf_bytes = content
+        judgment.pdf_bytes = ensure_pdf(content)
         return judgment
 
     async def search_by_year(
