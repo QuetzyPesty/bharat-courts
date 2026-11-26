@@ -24,13 +24,30 @@ suite = Suite(
 shared: dict = {}
 
 
+def _feed_says_empty(home_html: str) -> bool:
+    """True when the homepage's Judgments tab shows its empty-state text."""
+    import re
+
+    for m in re.finditer(r"vc_tta-title-text\">Judgments</span>(.{0,600})", home_html, re.S):
+        if "No records found" in m.group(1):
+            return True
+    return False
+
+
 @suite.check("Recent judgments feed", "SCIClient.list_recent_judgments", "parse_recent_judgments")
 async def check_recent(c: Check) -> None:
     from bharat_courts import SCIClient
 
     async with SCIClient() as client:
         items = await client.list_recent_judgments(limit=10)
+        if not items:
+            home = await client._http.get_text("https://www.sci.gov.in/")
     c.details["items"] = len(items)
+    if not items and _feed_says_empty(home):
+        # The homepage only lists the day's uploads; at night and on holidays its
+        # Judgments panel reads "No records found". Zero is then the right answer.
+        c.skip("the homepage's Judgments panel says 'No records found' today")
+        return
     assert items, "homepage feed parsed to zero items"
     first = items[0]
     c.details["first"] = f"{first.judgment_date} {first.case_number} — {first.title[:60]}"
@@ -47,6 +64,9 @@ async def check_pdf(c: Check) -> None:
     from bharat_courts import SCIClient
 
     items = [j for j in shared.get("items", []) if j.pdf_url]
+    if not shared.get("items"):
+        c.skip("no feed items today to download")
+        return
     assert items, "no feed item with a PDF URL"
     async with SCIClient() as client:
         j = await client.download_pdf(items[0])

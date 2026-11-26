@@ -28,10 +28,11 @@ from __future__ import annotations
 import logging
 import random
 import re
+from urllib.parse import parse_qs, urlparse
 
 from bharat_courts.captcha import default_solver
 from bharat_courts.captcha.base import CaptchaSolver
-from bharat_courts.casedetail import parse_case_detail
+from bharat_courts.casedetail import DISPLAY_PDF_ACTION, parse_case_detail
 from bharat_courts.config import BharatCourtsConfig
 from bharat_courts.config import config as default_config
 from bharat_courts.districtcourts import endpoints
@@ -39,6 +40,7 @@ from bharat_courts.districtcourts.parser import (
     CaptchaError,
     InvalidRequestError,
     MalformedResponseError,
+    ServerError,
     parse_ajax_response,
     parse_case_status_html,
     parse_cause_list_html,
@@ -49,6 +51,7 @@ from bharat_courts.districtcourts.parser import (
 )
 from bharat_courts.http import RateLimitedClient
 from bharat_courts.models import CaseDetail, CaseInfo, CaseOrder, CauseListEntry
+from bharat_courts.pdf import PdfUnavailableError, ensure_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -762,3 +765,39 @@ class DistrictCourtClient:
         )
         html = result.get("causelist_data", result.get("cause_list_data", ""))
         return parse_cause_list_html(html)
+
+    async def download_order_pdf(self, pdf_url: str) -> bytes:
+        """Download an order PDF found by :meth:`case_status_by_cnr` or :meth:`court_orders`.
+
+        District order links are ``home/display_pdf?...`` URLs that record the
+        portal's ``displayPdf(...)`` arguments. The portal only answers them in
+        the session that looked the case up, so call this on the **same client**,
+        soon after the lookup. It POSTs the fields, receives
+        ``{"order": "reports/<hash>.pdf"}`` and fetches that file. Plain PDF URLs
+        are fetched directly.
+
+        Raises:
+            PdfUnavailableError: the session expired (look the case up again
+                first), or the portal returned something that is not a PDF.
+                Subclasses tell "not uploaded" and "server down" apart.
+        """
+        parsed = urlparse(pdf_url)
+        if parsed.path.rstrip("/").endswith(DISPLAY_PDF_ACTION):
+            fields = {k: v[0] for k, v in parse_qs(parsed.query, keep_blank_values=True).items()}
+            try:
+                result = await self._post_ajax(DISPLAY_PDF_ACTION, fields)
+            except ServerError as exc:
+                if "session" in str(exc).lower():
+                    raise PdfUnavailableError(
+                        "The portal session for this case has expired: look the case up "
+                        "again with this client, then download its orders."
+                    ) from exc
+                raise
+            order = str(result.get("order") or "")
+            if not order:
+                raise PdfUnavailableError(f"The portal returned no file for this order: {result!r}")
+            url = order if order.startswith("http") else f"{endpoints.BASE_URL}/{order.lstrip('/')}"
+        else:
+            url = pdf_url
+        resp = await self._http.get(url, headers={"Referer": endpoints.BASE_URL + "/"})
+        return ensure_pdf(resp.content)

@@ -140,6 +140,22 @@ Gotchas worth keeping in mind:
   only catches `CaptchaError`) aborts the query on a single bad OCR guess instead
   of retrying with a fresh session.
 
+### Order PDFs (`pdf.py`, `casedetail.order_link`)
+
+- Every portal download goes through `pdf.ensure_pdf`. HC Services puts a UTF-8 BOM in front of
+  `%PDF` on order and cause-list PDFs; it is stripped (the file's offsets do not count it). Non-PDF
+  answers raise `OrderNotUploadedError` / `PortalUnavailableError` / `PdfUnavailableError`, all
+  `RuntimeError` subclasses. Don't reintroduce a bare `content[:4] == b"%PDF"` check.
+- District order anchors are `href='#'` + `onclick=displayPdf(normal_v, case_val, court_code,
+  filename, appFlag)`. `order_link` turns them into a `home/display_pdf?...` URL that records the
+  fields; `DistrictCourtClient.download_order_pdf` POSTs them via `_post_ajax` and fetches the
+  returned `reports/<hash>.pdf`. Only the session that looked the case up gets an answer
+  ("Session timeout" otherwise).
+- `HCServicesClient.court_orders` reads orders from the CNR case page. The search response's
+  `orderurlpath` gives one undated document; building "an order dated today" from it was wrong.
+- District CNR prefixes are not always four letters (`MP04…`, `WBCHCO…`): match
+  `[A-Z]{2}[A-Z0-9]{4}\d{10}`.
+
 ### Archive module (`src/bharat_courts/archive/`)
 
 Opt-in module that mirrors the public AWS Open Data judgment buckets locally.

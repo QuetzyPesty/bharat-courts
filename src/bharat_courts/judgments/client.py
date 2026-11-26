@@ -34,10 +34,9 @@ from bharat_courts.http import RateLimitedClient
 from bharat_courts.judgments import endpoints
 from bharat_courts.judgments.parser import parse_search_response
 from bharat_courts.models import JudgmentResult, SearchResult
+from bharat_courts.pdf import ensure_pdf
 
 logger = logging.getLogger(__name__)
-
-_PDF_MAGIC = b"%PDF"
 
 
 class JudgmentSearchClient:
@@ -355,12 +354,7 @@ class JudgmentSearchClient:
             url,
             headers={"Referer": endpoints.MAIN_PAGE_URL},
         )
-        if content[:4] != _PDF_MAGIC:
-            raise RuntimeError(
-                f"PDF download did not return a valid PDF "
-                f"(got {len(content)} bytes; head={content[:64]!r})"
-            )
-        judgment.pdf_bytes = content
+        judgment.pdf_bytes = ensure_pdf(content)
         return judgment
 
     async def download_pdfs(

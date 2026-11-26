@@ -91,7 +91,7 @@ monitored live.
 | `list_districts` / `list_complexes` / `parse_complex_value` / `list_establishments` / `list_case_types` | districtcourts · cascade checks; cli |
 | `list_cause_list_courts` / `cause_list` | districtcourts · Cause-list courts + cause list |
 | `DistrictCourtClient.case_status_by_party` | districtcourts · Case status by party |
-| `DistrictCourtClient.case_status_by_cnr` → `CaseDetail` | districtcourts · Case detail by CNR |
+| `DistrictCourtClient.case_status_by_cnr` → `CaseDetail` / `download_order_pdf` | districtcourts · Case detail by CNR (+ first order PDF, same session) |
 | `DistrictCourtClient.court_orders` | districtcourts · Court orders |
 | `JudgmentSearchClient.search` (HC and SCR), `search_all`, `download_pdf` (two rows must differ — `val` indexing) | judgments |
 | `facade.live_to_judgment`; `Judgments.find` live route; `fetch_pdf(live)` → `NotImplementedError` | judgments · last three checks |

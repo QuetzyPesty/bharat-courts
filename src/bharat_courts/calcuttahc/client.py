@@ -28,6 +28,7 @@ from bharat_courts.config import BharatCourtsConfig
 from bharat_courts.config import config as default_config
 from bharat_courts.http import RateLimitedClient, create_legacy_ssl_context
 from bharat_courts.models import CaseInfo, CaseOrder
+from bharat_courts.pdf import ensure_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -227,13 +228,7 @@ class CalcuttaHCClient:
             pdf_url,
             headers={"Referer": endpoints.SEARCH_PAGE_URL},
         )
-        content = resp.content
-        if content[:4] != b"%PDF":
-            raise RuntimeError(
-                f"PDF download did not return a valid PDF "
-                f"(got {len(content)} bytes; head={content[:64]!r})"
-            )
-        return content
+        return ensure_pdf(resp.content)
 
 
 def _build_case_info(search_data: dict) -> CaseInfo | None:

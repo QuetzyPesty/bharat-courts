@@ -171,8 +171,9 @@ async with HCServicesClient(captcha_solver=solver) as client:
     )
     for order in orders:
         print(f"{order.order_date} — {order.order_type} by {order.judge}")
-        # download_order_pdf raises RuntimeError if the portal hands back its
-        # 30-byte BOM+error string instead of a real PDF.
+        # download_order_pdf raises a RuntimeError subclass when the portal has
+        # no PDF to give: OrderNotUploadedError, PortalUnavailableError, or
+        # PdfUnavailableError (all in bharat_courts.pdf).
         pdf = await client.download_order_pdf(order.pdf_url)
         with open(f"order_{order.order_date}.pdf", "wb") as f:
             f.write(pdf)
@@ -520,7 +521,9 @@ for case in cases:
 
 #### `court_orders(court, *, case_type, case_number, year, bench_code="1") -> list[CaseOrder]`
 
-Get court orders for a case. **CAPTCHA required** (auto-retried).
+Get every order on a case. **CAPTCHA required** (auto-retried). The case-number search finds
+the case's CNR, and the orders are read from the CNR case page (two CAPTCHAs), so each order
+has its real date, judge and a working PDF link. A case filed recently may have none yet.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -588,7 +591,16 @@ Download an order or judgment PDF. **No CAPTCHA required.**
 
 **Returns:** `bytes` — raw PDF file content.
 
-**Raises:** `RuntimeError` if the response doesn't start with the `%PDF` magic bytes. The HC Services portal sometimes hands back a 30-byte BOM-prefixed `"Unable to connect to server"` string with HTTP 200; this method now refuses to silently return that as a PDF.
+A UTF-8 byte-order mark in front of `%PDF` (how HC Services serves order and cause-list PDFs) is
+removed; the bytes returned start with `%PDF`.
+
+**Raises** (all subclass `RuntimeError`, from `bharat_courts.pdf`):
+
+- `OrderNotUploadedError`: the portal says "Orders is not uploaded for case number …". The order is
+  on the case page but the court has not uploaded its PDF.
+- `PortalUnavailableError`: the portal answered "Unable to connect to server" (its back end is
+  down, usually at night). Try again later.
+- `PdfUnavailableError`: anything else that is not a PDF.
 
 ```python
 pdf_bytes = await client.download_order_pdf(order.pdf_url)
@@ -727,7 +739,7 @@ cases = await client.case_status_by_party(
 
 ##### `court_orders(*, state_code, dist_code, court_complex_code, est_code, case_type, case_number, year) -> list[CaseOrder]`
 
-Get court orders for a case.
+Get court orders for a case. Download each with `download_order_pdf` on the **same client**.
 
 ```python
 orders = await client.court_orders(
@@ -739,6 +751,21 @@ orders = await client.court_orders(
     case_number="100",
     year="2024",
 )
+```
+
+##### `download_order_pdf(pdf_url) -> bytes`
+
+Download an order found by `case_status_by_cnr` or `court_orders`. District order links are
+`.../home/display_pdf?normal_v=…&case_val=…&court_code=…&filename=…` URLs that record the
+portal's `displayPdf(...)` arguments; the portal answers them only in the session that looked the
+case up, so call this on the same client soon after the lookup. Raises the same errors as the
+High Court method; an expired session raises `PdfUnavailableError` saying to look the case up again.
+
+```python
+async with DistrictCourtClient(captcha_solver=solver) as client:
+    detail = await client.case_status_by_cnr("MP04050004072025")
+    for order in detail.orders:
+        pdf = await client.download_order_pdf(order.pdf_url)
 ```
 
 ##### `cause_list(*, state_code, dist_code, court_complex_code, est_code, court_no, court_name="", causelist_date="", civil=True) -> list[CauseListEntry]`

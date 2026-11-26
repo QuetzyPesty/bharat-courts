@@ -253,7 +253,9 @@ async def check_party(c: Check) -> None:
         async def run(cand):
             (code, ests, needs, _name), party = cand
             est = (
-                shared.get("est") if code == shared.get("complex") else (ests[0] if needs else "")
+                shared.get("est")
+                if code == shared.get("complex")
+                else (ests[0] if needs and ests else "")
             ) or ""
             rows = await client.case_status_by_party(
                 state_code=state,
@@ -307,6 +309,20 @@ async def check_cnr_detail(c: Check) -> None:
             accept=lambda d: bool(d.petitioners or d.respondents or d.history or d.case_stage),
             max_tries=3,
         )
+        # Order PDFs only answer in the session that looked the case up.
+        order = next((o for o in (detail.orders if detail else []) if o.pdf_url), None)
+        if order is not None:
+            from bharat_courts.pdf import PortalUnavailableError
+
+            try:
+                pdf = await client.download_order_pdf(order.pdf_url)
+            except PortalUnavailableError as exc:
+                c.details["order pdf"] = f"portal down: {str(exc)[:60]}"
+            else:
+                c.details["order pdf"] = (
+                    f"{order.order_date} {order.order_type}: {len(pdf):,} bytes"
+                )
+                assert pdf[:4] == b"%PDF", "order download did not return a PDF"
     assert detail is not None, "no CNR lookup returned a populated case page"
     c.details["cnr"] = detail.cnr_number
     c.details["stage / status"] = f"{detail.case_stage!r} / {detail.status!r}"

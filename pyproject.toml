@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ocr = ["Pillow>=11.0", "ddddocr>=1.5.5,<1.6"]
+ocr = ["Pillow>=11.0", "ddddocr>=1.5.5,<1.7"]
 onnx = ["onnxruntime>=1.17", "Pillow>=11.0", "numpy>=1.24"]
 cli = ["click>=8.1", "rich>=13.0"]
 archive = ["duckdb>=1.1"]
