@@ -416,6 +416,9 @@ async def check_advocate(c: Check) -> None:
             # The portal rejects punctuation in a name search (ERROR_VAL).
             name = re.sub(r"[^A-Za-z ]+", " ", name).strip()
             name = re.sub(r"\s+", " ", name)
+            # A trailing initial ("NEERAJ KUMAR SHARMA P") makes the portal's literal match
+            # return nothing (MP HC: 0 rows with it, 33 without): drop single letters at the ends.
+            name = re.sub(r"^(?:[A-Za-z] )+|(?: [A-Za-z])+$", "", name).strip()
             if len(name) >= 5 and " " in name and name not in names:
                 names.append(name)
     c.details["advocates_on_case"] = names[:3]
