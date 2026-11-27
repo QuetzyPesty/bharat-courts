@@ -329,6 +329,7 @@ Note: `status`, `registration_date`, `judges`, and `next_hearing_date` are not r
 | [Judgment Search](https://judgments.ecourts.gov.in) | `JudgmentSearchClient` | Search, pagination, bulk PDF download |
 | [Supreme Court](https://www.sci.gov.in) | `SCIClient` | Recent judgments feed + PDF download (case-no search not yet implemented) |
 | [Calcutta High Court](https://calcuttahighcourt.gov.in) | `CalcuttaHCClient` | Order/judgment search + PDF download (direct from HC website) |
+| [High Court of Karnataka](https://judiciary.karnataka.gov.in/casemenu.php) | `KarnatakaHCClient` | Case status by number / party / advocate, daily-order register (order text + PDFs), IAs, linked cases, lower court; all three benches (direct from HC website) |
 | [SCI Archive](https://registry.opendata.aws/indian-supreme-court-judgments/) (S3, CC-BY-4.0) | `ArchiveClient` | DuckDB metadata search + PDF retrieval, 1950–present; SCI bi-monthly + 25 HCs quarterly |
 | [HC Archive](https://registry.opendata.aws/indian-high-court-judgments/) (S3, CC-BY-4.0) | `ArchiveClient` | Same as above; routed via the unified `ArchiveClient` |
 
@@ -1017,6 +1018,38 @@ pdf_bytes = await client.download_order_pdf(order.pdf_url)
 
 ---
 
+### `KarnatakaHCClient`
+
+Client for the High Court of Karnataka's own case-status pages (`judiciary.karnataka.gov.in`), beside eCourts HC Services. It reads more than HC Services gives: each sitting's entry in the daily-order register (the order text itself, typed in by the court) with its PDF, interlocutory applications, linked cases and the order under appeal. Benches: Bengaluru (`B`, CNR `KAHC01…`), Dharwad (`D`, `KAHC02…`), Kalaburagi (`K`, `KAHC03…`). The site's CAPTCHA is six digits; OCR answers are cleaned to digits (`o`→`0`, `l`→`1`…) and an answer that is not six digits is never sent.
+
+```python
+from bharat_courts import KarnatakaHCClient
+
+async with KarnatakaHCClient() as khc:
+    code = await khc.resolve_case_type("W.A.")            # -> "WA" (the site's own code)
+    case = await khc.case_status(bench="Bengaluru", case_type=code, number="1035", year="2026")
+    if case:                                              # None = the site has no such case
+        print(case.case_number, case.cnr_number, case.status, case.next_hearing_date, case.coram)
+        for o in case.orders:                             # newest first; "Daily Order" / "Judgment"
+            print(o.order_date, o.order_text[:80])
+            if o.pdf_url:
+                pdf = await khc.download_order_pdf(o.pdf_url)
+    rows = await khc.search_by_party(bench="Dharwad", name="CORPORATION")   # filings of the last year
+    first = await khc.open_search_result(rows[0]["open_key"])               # same session, no new CAPTCHA
+```
+
+| Method | Returns |
+|---|---|
+| `case_types()` / `resolve_case_type(typed)` | `[(code, label)]` / the site's code for "Crl.P.", "w.a." etc. (`ValueError` if none) |
+| `case_status(*, bench, case_type, number, year, sections=...)` | `KarnatakaCase` (a `CaseDetail` plus `bench`, `case_number`, `last_action`, `last_action_date`, `linked_cases`, `interlocutory_applications`, `lower_court`) or `None` |
+| `search_by_party` / `search_by_advocate(*, bench, name, side="either", case_type="0", filed_from=None, filed_to=None)` | list of dicts (case number, parties, advocates, last action, `open_key`). Filing dates at most a year apart; names at least four letters (`KarnatakaSearchError`) |
+| `open_search_result(open_key)` | `KarnatakaCase` for a search row |
+| `download_order_pdf(pdf_url)` | PDF bytes; `bharat_courts.pdf` errors when the site has none |
+
+`KarnatakaCaptchaError` (a `RuntimeError`) is raised when the site refuses six answers in a row.
+
+---
+
 ### `ArchiveClient`
 
 Read-only access to the public AWS Open Data judgment archives (no CAPTCHA, no
@@ -1656,6 +1689,10 @@ src/bharat_courts/
 │   ├── client.py        # CalcuttaHCClient
 │   ├── endpoints.py     # URL + form builders
 │   └── parser.py        # JSON + HTML response parsers
+├── karnatakahc/         # High Court of Karnataka (direct website)
+│   ├── client.py        # KarnatakaHCClient, KarnatakaCase
+│   ├── endpoints.py     # URLs, benchval form builders, bench/CNR maps
+│   └── parser.py        # HTML fragment parsers
 ├── judgments/            # Judgment Search portal (basic)
 │   ├── client.py
 │   ├── endpoints.py

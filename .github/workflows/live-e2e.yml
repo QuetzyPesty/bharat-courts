@@ -83,6 +83,11 @@ jobs:
             hits: calcuttahighcourt.gov.in + hcservices.ecourts.gov.in
             run_timeout: 8
             india_egress: true
+          - backend: karnatakahc
+            script: tests/integration/karnatakahc.py
+            hits: judiciary.karnataka.gov.in + hcservices.ecourts.gov.in
+            run_timeout: 8
+            india_egress: true
           - backend: sci
             script: tests/integration/sci.py
             hits: www.sci.gov.in (homepage feed + PDF)

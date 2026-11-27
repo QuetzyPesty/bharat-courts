@@ -21,6 +21,7 @@ from bharat_courts.hcservices.client import HCServicesClient
 from bharat_courts.hcservices.parser import CaptchaError
 from bharat_courts.http import RateLimitedClient
 from bharat_courts.judgments.client import JudgmentSearchClient
+from bharat_courts.karnatakahc.client import KarnatakaHCClient
 from bharat_courts.models import (
     ActEntry,
     AdvocateSearch,
@@ -50,6 +51,7 @@ __all__ = [
     "ALL_COURTS",
     "BharatCourtsConfig",
     "CalcuttaHCClient",
+    "KarnatakaHCClient",
     "CaptchaError",
     "CaptchaSolver",
     "DistrictCourtClient",
