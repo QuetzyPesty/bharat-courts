@@ -6,7 +6,7 @@ Instructions for AI agents working on this codebase.
 
 bharat-courts is an async Python SDK for accessing Indian court data. Two complementary backends + one federated facade:
 
-1. **Live clients** (`hcservices`, `districtcourts`, `calcuttahc`, `judgments`, `sci`) — scrape the official eCourts portals. CAPTCHA-gated, rate-limited, can answer "current case status / cause list / orders in progress". This is the original SDK.
+1. **Live clients** (`hcservices`, `districtcourts`, `calcuttahc`, `karnatakahc`, `judgments`, `sci`) — scrape the official eCourts portals. CAPTCHA-gated, rate-limited, can answer "current case status / cause list / orders in progress". This is the original SDK.
 2. **Archive client** (`archive`, opt-in via `[archive]` extra) — DuckDB queries against the public AWS Open Data buckets (SCI 1950→present + 25 HCs, CC-BY-4.0). No CAPTCHA, no rate limits, but lags by 2–3 months. Used for historical research and bulk PDF retrieval.
 3. **`Judgments` facade** (`facade.py`) — single entry point that owns both backends, picks the right one per query (CNR → archive; text → live; structured → archive; mixed → archive with title fallback), and returns a uniform `Judgment` list. This is the recommended default for "find a judgment matching X".
 
@@ -38,6 +38,7 @@ python tests/integration/hcservices.py    # HC Services portal + CAPTCHA (rotati
 python tests/integration/districtcourts.py
 python tests/integration/judgments.py     # judgments portal + facade live route
 python tests/integration/calcuttahc.py
+python tests/integration/karnatakahc.py  # needs an Indian IP
 python tests/integration/sci.py
 python tests/integration/archive.py       # archive + facade vs real S3
 python tests/integration/cli.py           # the CLI, every command group
@@ -56,6 +57,7 @@ E2E_SEED=739914 python tests/integration/hcservices.py   # reproduce a day's rot
 - **`hcservices/`** — Primary live client for hcservices.ecourts.gov.in (fully working).
 - **`districtcourts/`** — Live client for services.ecourts.gov.in (700+ courts).
 - **`calcuttahc/`** — Direct-website client for calcuttahighcourt.gov.in.
+- **`karnatakahc/`** — Direct-website client for judiciary.karnataka.gov.in (High Court of Karnataka). See "Karnataka HC website" below.
 - **`judgments/`** — Live client for judgments.ecourts.gov.in.
 - **`sci/`** — Live client for www.sci.gov.in (homepage feed only; case-no search not yet wired).
 - **`archive/`** — Opt-in (`[archive]` extra). DuckDB over AWS Open Data parquet shards + per-tar / per-PDF caching. See "Archive module" below.
@@ -139,6 +141,24 @@ Gotchas worth keeping in mind:
   `status: 0`. It must map to `CaptchaError`, or `_post_with_captcha_retry` (which
   only catches `CaptchaError`) aborts the query on a single bad OCR guess instead
   of retrying with a fresh session.
+
+### Karnataka HC website (`karnatakahc/`)
+
+- One POST per search, single field `benchval` = values joined by `*`, CAPTCHA last
+  (`casestatus.php`: `B*WA*1035*2026*<captcha>`; `advocatestatus.php` / `partystatus.php`:
+  `B*<type|0>*<name>*<1|2|0>*<captcha>*<dd-mm-yyyy>*<dd-mm-yyyy>`). Answers `2` (wrong CAPTCHA, may
+  arrive as `"\n2\n"`: compare stripped), `3` (range over a year), `4` (name under 4 letters),
+  `RECORD_NOT_FOUND`, or an HTML fragment.
+- CAPTCHA (`captcha.php`) is six digits bound to the PHP session; `digits_only` maps OCR look-alikes
+  and a non-six-digit read is not sent. One session serves the search, its sections and its PDFs.
+- Case sections: `case_details_div.php` with `casenum=<case_no_val>` (H8 takes `fr_no_val`),
+  `lda=<last date of action>`, `div=H1..H18`. Daily orders (H3) carry the typed order text and,
+  when there is a PDF, `viewjud("<token>")` -> `napix/highcourtorderdetails.php` (`data=<token>`)
+  returns JSON `{"status":2,"data":<base64>}`; else the site retries `fetch_cis_judgment.php`.
+- Search rows carry `getcasedetailspart("B*WP*31602*2026*<captcha>")`: the site accepts that
+  CAPTCHA again in the same session (`open_search_result`).
+- The petitioner `<span id="petitioner">` is never closed on the site: read only its leading text.
+- CNR bench prefixes: `KAHC01` Bengaluru, `KAHC02` Dharwad, `KAHC03` Kalaburagi.
 
 ### Order PDFs (`pdf.py`, `casedetail.order_link`)
 
@@ -229,7 +249,7 @@ Delhi=26, Bombay=1, Allahabad=13, Calcutta=16, Gauhati=6, Telangana=29, AP=2, Ka
 ## Testing
 
 - **Unit tests** (`tests/`) — 250 tests, all offline. Parser tests use HTML/JSON fixtures in `tests/fixtures/`. Archive tests use synthetic in-memory tars + `respx`-mocked HTTP. Facade tests use `AsyncMock` to stub the backends so we exercise the routing decision matrix without touching either S3 or the live portal.
-- **Live integration tests** (`tests/integration/`) — standalone scripts (not pytest-collected; default `python_files=test_*.py` doesn't match these). One per backend: `hcservices.py`, `districtcourts.py`, `judgments.py`, `calcuttahc.py`, `sci.py`, `archive.py` (archive + facade), `cli.py`. All share `_common.py` (`Suite` / `Check`, daily rotation seeded by date or `E2E_SEED`, `first_working` fall-through, JSON summary via `E2E_SUMMARY_JSON`). Checks **rotate over pools of courts / states / phrases and chain off live results** instead of pinning one case — Delhi HC stopped publishing cause lists on HC Services in Oct 2026 and a pinned check failed for days. Verdicts are PASS / FAIL / **SKIP** (the portal's own outage page: not an SDK fault, never fails the script). `tests/integration/README.md` has the coverage map; keep it current when adding a public method.
+- **Live integration tests** (`tests/integration/`) — standalone scripts (not pytest-collected; default `python_files=test_*.py` doesn't match these). One per backend: `hcservices.py`, `districtcourts.py`, `judgments.py`, `calcuttahc.py`, `karnatakahc.py`, `sci.py`, `archive.py` (archive + facade), `cli.py`. All share `_common.py` (`Suite` / `Check`, daily rotation seeded by date or `E2E_SEED`, `first_working` fall-through, JSON summary via `E2E_SUMMARY_JSON`). Checks **rotate over pools of courts / states / phrases and chain off live results** instead of pinning one case — Delhi HC stopped publishing cause lists on HC Services in Oct 2026 and a pinned check failed for days. Verdicts are PASS / FAIL / **SKIP** (the portal's own outage page: not an SDK fault, never fails the script). `tests/integration/README.md` has the coverage map; keep it current when adding a public method.
 - **Live E2E monitor** (`.github/workflows/live-e2e.yml`) — runs all seven scripts daily, renders each JSON summary into the job summary and the `live-e2e-failure` tracking issue (`.github/scripts/render_e2e_summary.py`). The eCourts portals time out from GitHub runner IPs (since 2026-10-22), so portal jobs resolve an Indian egress: `E2E_PROXY_URL` secret → Tailscale exit node (`TS_*` secrets) → free public proxy picked by `.github/scripts/find_india_proxy.py` (probes the lists against the real portal) → direct. The archive job stays direct (S3 is reachable; don't meter 40 MB tars through a proxy).
 - **Mocking** — `respx` for HTTP (works with httpx natively), custom `CaptchaSolver` subclass returning fixed strings for live-client tests, `AsyncMock` + `unittest.mock.patch.object` for the archive query/cache layer and the facade routing.
 - **respx caveat**: doesn't support `host__icontains` matchers — use `url__regex` instead.

@@ -11,6 +11,7 @@ scripts power the daily [Live E2E monitor](#scheduled-monitor-ci).
 | `districtcourts.py` | `DistrictCourtClient` | `services.ecourts.gov.in` | 60–120s |
 | `judgments.py` | `JudgmentSearchClient`, facade (live route) | `judgments.ecourts.gov.in` | ~30s |
 | `calcuttahc.py` | `CalcuttaHCClient` (+ HC Services cross-check) | `calcuttahighcourt.gov.in` | ~40s |
+| `karnatakahc.py` | `KarnatakaHCClient` (+ HC Services cross-check) | `judiciary.karnataka.gov.in` | ~50s |
 | `sci.py` | `SCIClient` | `www.sci.gov.in` | ~5s |
 | `archive.py` | `ArchiveClient`, facade (archive route) | S3 `indian-{supreme,high}-court-judgments` | 30–100s cold |
 | `cli.py` | `bharat-courts` CLI, every command group | S3 + portals | ~60s |
@@ -28,6 +29,7 @@ python tests/integration/hcservices.py
 python tests/integration/districtcourts.py
 python tests/integration/judgments.py
 python tests/integration/calcuttahc.py
+python tests/integration/karnatakahc.py
 python tests/integration/sci.py
 python tests/integration/archive.py
 python tests/integration/cli.py
@@ -96,6 +98,7 @@ monitored live.
 | `JudgmentSearchClient.search` (HC and SCR), `search_all`, `download_pdf` (two rows must differ — `val` indexing) | judgments |
 | `facade.live_to_judgment`; `Judgments.find` live route; `fetch_pdf(live)` → `NotImplementedError` | judgments · last three checks |
 | `CalcuttaHCClient.search_orders` / `download_order_pdf` | calcuttahc |
+| `KarnatakaHCClient.case_types` / `resolve_case_type` / `case_status` / `download_order_pdf` / `search_by_party` / `open_search_result` / `search_by_advocate` | karnatakahc (known WA 1035/2026 + a rotating case per bench) |
 | `SCIClient.list_recent_judgments` / `download_pdf`; `search_by_*` → `NotImplementedError` | sci |
 | `ArchiveClient.search`, `iter_judgments`, `count`, `fetch_pdf` (HC direct GET + SCI tar), `cache_info`; parquet cache; CNR routing | archive |
 | `Judgments.find` archive routes (structured / CNR / mixed / forced) + `ValueError` on no filters; `fetch_pdf(cnr)` | archive · Facade routing |
